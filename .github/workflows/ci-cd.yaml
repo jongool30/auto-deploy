@@ -1,0 +1,134 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'Dockerfile'
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────
+  # 1. Test
+  # ──────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r app/requirements.txt httpx pytest
+
+      - name: Run health check test
+        run: |
+          cd app
+          python -c "
+          from fastapi.testclient import TestClient
+          from main import app
+          client = TestClient(app)
+
+          # Test root endpoint
+          r = client.get('/')
+          assert r.status_code == 200
+          assert r.json()['service'] == 'auto-deploy-api'
+
+          # Test health endpoint
+          r = client.get('/health')
+          assert r.status_code == 200
+          assert r.json()['status'] == 'healthy'
+
+          # Test info endpoint
+          r = client.get('/info')
+          assert r.status_code == 200
+
+          print('✅ All tests passed!')
+          "
+
+  # ──────────────────────────────────────
+  # 2. Build & Push Docker Image
+  # ──────────────────────────────────────
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ──────────────────────────────────────
+  # 3. Update K8s Manifest (GitOps)
+  # ──────────────────────────────────────
+  update-manifest:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update deployment image tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
+
+          # Update image in deployment.yaml
+          sed -i "s|image: .*|image: ${IMAGE}|" k8s/deployment.yaml
+
+          # Update APP_VERSION
+          sed -i "s|value: \".*\" # version|value: \"${SHORT_SHA}\"|" k8s/deployment.yaml
+
+          # Update DEPLOYED_AT
+          DEPLOY_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          sed -i "s|value: \"202[0-9]-.*\"|value: \"${DEPLOY_DATE}\"|" k8s/deployment.yaml
+
+      - name: Commit and push manifest changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/deployment.yaml
+          git diff --staged --quiet || git commit -m "chore: update image tag to $(echo ${{ github.sha }} | cut -c1-7)"
+          git push

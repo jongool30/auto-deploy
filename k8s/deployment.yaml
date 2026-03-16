@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-deploy-api
+  namespace: auto-deploy
+  labels:
+    app: auto-deploy-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auto-deploy-api
+  template:
+    metadata:
+      labels:
+        app: auto-deploy-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/jongool30/auto-deploy:latest  # GitHub Actions에서 자동 업데이트
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: APP_VERSION
+              value: "1.0.0"
+            - name: DEPLOYED_AT
+              value: "2026-03-16"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
