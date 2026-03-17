@@ -1,0 +1,64 @@
+# ============================================
+# Auto Deploy - Docker Compose
+# ============================================
+# 사용법:
+#   로컬 개발:    docker compose up -d
+#   전체 스택:    docker compose --profile full up -d
+#   중지:         docker compose down
+#   로그 확인:    docker compose logs -f api
+# ============================================
+
+services:
+  # ──────────────────────────────────────
+  # 1. FastAPI 앱 (항상 실행)
+  # ──────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-ghcr.io/jongool30/auto-deploy}:${IMAGE_TAG:-latest}
+    container_name: ${APP_NAME:-auto-deploy-api}
+    ports:
+      - "${COMPOSE_APP_PORT:-8000}:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - APP_VERSION=${APP_VERSION:-1.0.0}
+      - DEPLOYED_AT=${DEPLOYED_AT:-unknown}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ──────────────────────────────────────
+  # 2. K3d + ArgoCD 올인원 (profile: full)
+  # ──────────────────────────────────────
+  k3d-setup:
+    image: docker:27-dind
+    container_name: k3d-setup
+    profiles: ["full"]
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/scripts
+      - ./.env:/app/.env
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "⏳ K3d + ArgoCD 자동 설정은 호스트에서 실행하세요:"
+        echo "   bash scripts/setup-with-env.sh"
+        echo ""
+        echo "Docker Compose는 앱 컨테이너만 관리합니다."
+        echo "K3d/ArgoCD는 호스트 레벨에서 동작합니다."
+        sleep infinity
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

@@ -1,41 +1,42 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/load-env.sh"
 
 echo "============================================"
 echo "  Step 3: ArgoCD Application 등록"
 echo "============================================"
 
-# GitHub 사용자명 자동 감지
-GITHUB_USER=$(gh api user -q '.login' 2>/dev/null || echo "OWNER")
-
-if [ "$GITHUB_USER" = "OWNER" ]; then
-  echo "⚠️  GitHub CLI 로그인이 필요합니다: gh auth login"
-  read -p "GitHub 사용자명을 입력하세요: " GITHUB_USER
-fi
-
-REPO_URL="https://github.com/${GITHUB_USER}/auto-deploy.git"
-
+REPO_URL="https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
 echo "📦 Repository: $REPO_URL"
+echo "📂 Branch: ${GITHUB_BRANCH}"
 
 # K8s namespace 생성
 kubectl apply -f k8s/namespace.yaml
+
+# GHCR imagePullSecret 생성
+kubectl create secret docker-registry ghcr-secret \
+  --docker-server=${DOCKER_REGISTRY:-ghcr.io} \
+  --docker-username=${GITHUB_USERNAME} \
+  --docker-password=$(gh auth token) \
+  --namespace=${K8S_NAMESPACE:-auto-deploy} \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 # ArgoCD Application 생성
 cat <<EOF | kubectl apply -f -
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: auto-deploy-api
+  name: ${APP_NAME:-auto-deploy-api}
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: ${REPO_URL}
-    targetRevision: main
+    targetRevision: ${GITHUB_BRANCH}
     path: k8s
   destination:
     server: https://kubernetes.default.svc
-    namespace: auto-deploy
+    namespace: ${K8S_NAMESPACE:-auto-deploy}
   syncPolicy:
     automated:
       prune: true

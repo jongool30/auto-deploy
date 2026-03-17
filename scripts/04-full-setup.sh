@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/load-env.sh"
 
 echo "╔══════════════════════════════════════════════╗"
 echo "║  🚀 전체 자동화 파이프라인 설정 시작          ║"
@@ -36,8 +37,8 @@ echo ""
 echo "============================================"
 echo "  Docker 이미지 빌드"
 echo "============================================"
-docker build -t auto-deploy-api:local "$PROJECT_DIR"
-k3d image import auto-deploy-api:local -c automation-cluster
+docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" "$PROJECT_DIR"
+k3d image import "${IMAGE_NAME}:${IMAGE_TAG}" -c "${CLUSTER_NAME}"
 echo "✅ Docker 이미지 빌드 및 클러스터 로드 완료"
 echo ""
 
@@ -54,15 +55,11 @@ echo "============================================"
 echo "  GitHub Repository 설정"
 echo "============================================"
 
-GITHUB_USER=$(gh api user -q '.login' 2>/dev/null || echo "")
-if [ -z "$GITHUB_USER" ]; then
+# GitHub 인증 확인
+if ! gh auth status >/dev/null 2>&1; then
   echo "⚠️  GitHub 로그인이 필요합니다."
   gh auth login
-  GITHUB_USER=$(gh api user -q '.login')
 fi
-
-# deployment.yaml에서 OWNER를 실제 사용자명으로 변경
-sed -i "s|OWNER|${GITHUB_USER}|g" k8s/deployment.yaml
 
 # Git 초기화 및 push
 if [ ! -d .git ]; then
@@ -72,10 +69,10 @@ if [ ! -d .git ]; then
 fi
 
 # GitHub 레포 생성 (없으면)
-gh repo create auto-deploy --public --source=. --remote=origin 2>/dev/null || echo "Repo already exists"
-git push -u origin main 2>/dev/null || git push -u origin master
+gh repo create "${GITHUB_REPO}" --public --source=. --remote=origin 2>/dev/null || echo "Repo already exists"
+git push -u origin "${GITHUB_BRANCH}" 2>/dev/null || git push -u origin main
 
-echo "✅ GitHub 레포 설정 완료: https://github.com/${GITHUB_USER}/auto-deploy"
+echo "✅ GitHub 레포 설정 완료: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}"
 echo ""
 
 # ────────────────────────────────────────
@@ -98,7 +95,8 @@ echo "   3. GitHub Actions → k8s/deployment.yaml 이미지 태그 업데이트
 echo "   4. ArgoCD → 변경 감지 → K3s 자동 배포"
 echo ""
 echo "🔧 유용한 명령어:"
-echo "   ArgoCD UI:   kubectl port-forward svc/argocd-server -n argocd 9090:443"
-echo "   앱 상태:     kubectl get pods -n auto-deploy"
-echo "   앱 접속:     curl http://localhost:8080/"
-echo "   로그 확인:   kubectl logs -f -l app=auto-deploy-api -n auto-deploy"
+echo "   Docker Compose: docker compose up -d"
+echo "   ArgoCD UI:   kubectl port-forward svc/argocd-server -n argocd ${ARGOCD_PORT}:443"
+echo "   앱 상태:     kubectl get pods -n ${K8S_NAMESPACE}"
+echo "   앱 접속:     curl http://localhost:${K3D_LB_HTTP_PORT}/"
+echo "   로그 확인:   kubectl logs -f -l app=${APP_NAME} -n ${K8S_NAMESPACE}"

@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/load-env.sh"
 
 echo "============================================"
 echo "  Step 2: ArgoCD 설치"
@@ -24,11 +25,11 @@ echo "============================================"
 echo "  ArgoCD 접속 정보"
 echo "============================================"
 ARGO_PWD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-echo "  URL:      https://localhost:8443"
+echo "  URL:      https://localhost:${ARGOCD_PORT:-9090}"
 echo "  Username: admin"
 echo "  Password: $ARGO_PWD"
 echo "============================================"
 echo ""
 echo "💡 포트포워딩 명령어:"
-echo "  kubectl port-forward svc/argocd-server -n argocd 9090:443"
-echo "  → https://localhost:9090 으로 접속"
+echo "  kubectl port-forward svc/argocd-server -n argocd ${ARGOCD_PORT:-9090}:443"
+echo "  → https://localhost:${ARGOCD_PORT:-9090} 으로 접속"
